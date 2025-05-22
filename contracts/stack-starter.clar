@@ -328,3 +328,70 @@
         (ok true)
     )
 )
+
+;; Claim funds for a successful campaign (creator only)
+(define-public (claim-funds (campaign-id uint))
+    (let (
+            (campaign (unwrap! (get-campaign campaign-id) ERR_CAMPAIGN_NOT_FOUND))
+            (platform-fee (calculate-platform-fee (get raised campaign)))
+            (creator-amount (- (get raised campaign) platform-fee))
+        )
+        ;; Input validation
+        (asserts! (is-valid-campaign-id campaign-id) ERR_INVALID_PARAMETERS)
+        (update-campaign-status campaign-id)
+        (asserts! (is-eq (get creator campaign) tx-sender) ERR_UNAUTHORIZED)
+        (asserts! (>= stacks-block-height (get deadline-height campaign))
+            ERR_CAMPAIGN_ACTIVE
+        )
+        (asserts! (is-campaign-successful campaign-id) ERR_GOAL_NOT_MET)
+        ;; Handle voting if enabled
+        (if (get voting-enabled campaign)
+            (begin
+                (asserts!
+                    (>= stacks-block-height (get voting-deadline-height campaign))
+                    ERR_VOTING_PERIOD_ENDED
+                )
+                (asserts!
+                    (> (get votes-for campaign) (get votes-against campaign))
+                    ERR_GOAL_NOT_MET
+                )
+            )
+            true
+        )
+        ;; Transfer funds to creator (minus platform fee)
+        (try! (as-contract (stx-transfer? creator-amount tx-sender (get creator campaign))))
+        ;; Transfer platform fee to contract owner
+        (if (> platform-fee u0)
+            (try! (as-contract (stx-transfer? platform-fee tx-sender CONTRACT_OWNER)))
+            true
+        )
+        (ok true)
+    )
+)
+
+;; Request refund for failed campaigns
+(define-public (request-refund (campaign-id uint))
+    (let (
+            (campaign (unwrap! (get-campaign campaign-id) ERR_CAMPAIGN_NOT_FOUND))
+            (contribution (unwrap! (get-contribution campaign-id tx-sender) ERR_NO_CONTRIBUTION))
+        )
+        ;; Input validation
+        (asserts! (is-valid-campaign-id campaign-id) ERR_INVALID_PARAMETERS)
+        (update-campaign-status campaign-id)
+        (asserts! (not (get refunded contribution)) ERR_ALREADY_REFUNDED)
+        (asserts! (>= stacks-block-height (get deadline-height campaign))
+            ERR_CAMPAIGN_ACTIVE
+        )
+        (asserts! (not (is-campaign-successful campaign-id)) ERR_GOAL_NOT_MET)
+        ;; Mark as refunded
+        (map-set contributions {
+            campaign-id: campaign-id,
+            contributor: tx-sender,
+        }
+            (merge contribution { refunded: true })
+        )
+        ;; Transfer refund
+        (try! (as-contract (stx-transfer? (get amount contribution) tx-sender tx-sender)))
+        (ok true)
+    )
+)

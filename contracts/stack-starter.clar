@@ -158,3 +158,67 @@
         voter: voter,
     })
 )
+
+;; Private Functions
+
+;; Validate string input to prevent malicious content
+(define-private (is-valid-string (input (string-ascii 256)))
+    (let ((length (len input)))
+        (and
+            (> length u0)
+            (<= length u256)
+            true
+        )
+    )
+)
+
+;; Validate campaign ID is within reasonable bounds
+(define-private (is-valid-campaign-id (campaign-id uint))
+    (and
+        (> campaign-id u0)
+        (<= campaign-id MAX_CAMPAIGN_ID)
+    )
+)
+
+;; Add a contributor to the campaign's contributor list
+(define-private (add-contributor-to-list
+        (campaign-id uint)
+        (contributor principal)
+    )
+    (let ((current-list (default-to (list)
+            (get contributor-list
+                (map-get? campaign-contributors { campaign-id: campaign-id })
+            ))))
+        (if (< (len current-list) u500)
+            (begin
+                (map-set campaign-contributors { campaign-id: campaign-id } { contributor-list: (unwrap! (as-max-len? (append current-list contributor) u500)
+                    ERR_CONTRIBUTOR_LIST_FULL
+                ) }
+                )
+                (ok true)
+            )
+            (ok true)
+        )
+    )
+)
+
+;; Update campaign status based on current blockchain height
+(define-private (update-campaign-status (campaign-id uint))
+    (match (get-campaign campaign-id)
+        campaign (begin
+            (if (>= stacks-block-height (get deadline-height campaign))
+                (if (>= (get raised campaign) (get goal campaign))
+                    (map-set campaigns { campaign-id: campaign-id }
+                        (merge campaign { status: STATUS_SUCCESSFUL })
+                    )
+                    (map-set campaigns { campaign-id: campaign-id }
+                        (merge campaign { status: STATUS_FAILED })
+                    )
+                )
+                true
+            )
+            true
+        )
+        false
+    )
+)
